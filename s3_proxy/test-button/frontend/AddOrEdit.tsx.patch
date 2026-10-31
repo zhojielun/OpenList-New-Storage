@@ -1,0 +1,53 @@
+diff --git a/src/pages/manage/storages/AddOrEdit.tsx b/src/pages/manage/storages/AddOrEdit.tsx
+index 6f64119..e0a8dea 100644
+--- a/src/pages/manage/storages/AddOrEdit.tsx
++++ b/src/pages/manage/storages/AddOrEdit.tsx
+@@ -96,6 +96,27 @@ const AddOrEdit = () => {
+   }
+   const [storage, setStorage] = createStore<Storage>({} as Storage)
+   const [addition, setAddition] = createStore<Addition>({})
++  const [proxyTesting, setProxyTesting] = createSignal(false)
++  const testProxy = async () => {
++    if (proxyTesting()) return
++    setProxyTesting(true)
++    try {
++      const resp = await r.post("/admin/s3proxy/test", {
++        proxy_url: addition.proxy_url,
++        endpoint: addition.endpoint,
++      })
++      handleResp(resp, (data: any) => {
++        notify.success(
++          t("drivers.S3 Proxy.test_proxy_ok", {
++            target: data.target,
++            ms: data.latency_ms,
++          }),
++        )
++      })
++    } finally {
++      setProxyTesting(false)
++    }
++  }
+   const [okLoading, ok] = useFetch((): PResp<{ id: number }> => {
+     setStorage("addition", JSON.stringify(addition))
+     return r.post(`/admin/storage/${id ? "update" : "create"}`, storage)
+@@ -181,6 +202,20 @@ const AddOrEdit = () => {
+                 onChange={(val: any) => {
+                   setAddition(item.name, val)
+                 }}
++                rightSlot={
++                  storage.driver === "S3 Proxy" &&
++                  item.name === "proxy_url" ? (
++                    <Button
++                      variant="subtle"
++                      loading={proxyTesting()}
++                      disabled={!addition.proxy_url || !addition.endpoint}
++                      whiteSpace="nowrap"
++                      onClick={testProxy}
++                    >
++                      {t("drivers.S3 Proxy.test_proxy")}
++                    </Button>
++                  ) : undefined
++                }
+               />
+             )}
+           </For>

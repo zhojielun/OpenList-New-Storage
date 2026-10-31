@@ -180,6 +180,18 @@ Custom Host、预签名、直传、User-Agent……），只是最后多一个�
 | --- | --- | --- |
 | **SOCKS5 代理地址 (`proxy_url`)** | **是** | `socks5://host:port` / `socks5://user:pass@host:port` / `socks5h://...` |
 
+`proxy_url` 右侧有「测试」按钮：会用当前填写的代理实际连接 `endpoint`，
+成功提示 `代理可用：host:port，耗时 N 毫秒`，失败会显示具体原因。
+只有 `存储代理` 驱动会出现这个按钮。
+
+## 测试按钮
+
+按钮改到了 OpenList 核心的后端路由和前端存储表单，只安装驱动源码不会出现；
+补丁和构建步骤见 [`test-button/`](test-button/README.md)。
+
+注意 `build.sh` 会重新下载官方前端覆盖 `public/dist/`，带测试按钮的前端要
+按该目录里的说明构建，然后手动 `CGO_ENABLED=0 go build`。
+
 ## 行为说明
 
 - `proxy_url` 必填：留空会直接报 `proxy_url is required`，**不会用本机 IP 直连 S3**；
@@ -210,5 +222,6 @@ s3_proxy/
 ├── proxy_test.go        # SOCKS5 端到端测试
 ├── util_test.go         # 从 drivers/s3 带过来的测试
 ├── i18n/                # 前端中文词条（可选）
+├── test-button/         # 可选：proxy_url 测试按钮补丁
 └── README.md
 ```

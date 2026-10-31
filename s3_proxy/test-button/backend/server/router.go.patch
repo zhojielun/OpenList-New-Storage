@@ -1,0 +1,14 @@
+diff --git a/server/router.go b/server/router.go
+index fe210e6e..d30bf7e8 100644
+--- a/server/router.go
++++ b/server/router.go
+@@ -195,6 +195,9 @@ func admin(g *gin.RouterGroup) {
+ 	storage.POST("/disable", handles.DisableStorage)
+ 	storage.POST("/load_all", handles.LoadAllStorages)
+ 
++	s3proxy := g.Group("/s3proxy")
++	s3proxy.POST("/test", handles.TestS3Proxy)
++
+ 	driver := g.Group("/driver")
+ 	driver.GET("/list", handles.ListDriverInfo)
+ 	driver.GET("/names", handles.ListDriverNames)
