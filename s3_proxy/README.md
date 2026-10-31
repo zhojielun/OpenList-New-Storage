@@ -9,66 +9,11 @@ OpenList 自带 `drivers/s3` 的完整副本，只多一个必填字段 `proxy_u
 
 ## 与自带 S3 驱动的差异
 
-只有一处字段差异，其余全部保留，行为与自带 `S3` 驱动一致：
-
 | | 自带 `S3` | 本驱动 (`S3 Proxy`) |
 | --- | --- | --- |
 | 字段 | 18 个 | 同样 18 个 + **`proxy_url`（必填）** |
 | 网络出口 | 本机直连 | 所有 S3 请求经 SOCKS5 |
 | 预签名 / 直链 / 直传 | 支持 | 同样支持（这些链接由浏览器直接访问，不占服务器出口 IP） |
-
-`meta.go` 与 `drivers/s3/meta.go` 的差异只有 `ProxyURL` 一行；`driver.go` / `util.go`
-只是把 `S3` 改成 `S3Proxy` 并把 HTTP Transport 换成 SOCKS5 Dialer。
-
-## 中文名称与界面翻译
-
-**这不是驱动写错了。** OpenList 前端的字段标题是按
-`drivers.<驱动名>.<字段名>` 查语言包的，驱动名是后端 `Config().Name`（这里叫
-`S3 Proxy`）。官方 zh-CN 语言包里只有 `S3` 的词条，没有 `S3 Proxy`，所以：
-
-- 驱动下拉框显示 `S3 Proxy`
-- 该驱动下面所有字段回退成英文原始字段名（`Bucket`、`Endpoint`……）
-- 字段提示回退成 `Proxy url-tips` 这种占位文本
-
-汉化有两条路，任选一条即可。
-
-### 方式一：补语言包后重新构建前端（推荐，长期）
-
-1. 把 [`i18n/zh-CN.drivers.json`](i18n/zh-CN.drivers.json) 合并进
-   `OpenList-Frontend/src/lang/zh-CN/drivers.json`：
-
-   ```bash
-   python3 - <<'PY'
-   import json
-   base = "OpenList-Frontend/src/lang/zh-CN/drivers.json"
-   snippet = json.load(open("s3_proxy/i18n/zh-CN.drivers.json", encoding="utf-8"))
-   data = json.load(open(base, encoding="utf-8"))
-
-   data["S3 Proxy"] = snippet["S3 Proxy"]              # 字段标题/提示
-   data.setdefault("drivers", {}).update(snippet["drivers"])  # 驱动显示名：存储代理
-
-   json.dump(data, open(base, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-   PY
-   ```
-
-2. 构建前端 dist，然后把它放进 `OpenList/public/dist/` 再编后端（或直接用
-   自定义 dist 替换官方 release 里的 dist）。显示名想改就改
-   `snippet["drivers"]["S3 Proxy"]` 的值。
-
-### 方式二：直接给官方前端 dist 打补丁（不用装 Node）
-
-官方 release 的 zh-CN 词条是编译进 `assets/entry-*.js` 的，脚本会往里追加
-`S3 Proxy` 词条（字段直接复用 `S3` 的翻译），幂等、不影响其他语言：
-
-```bash
-python3 s3_proxy/i18n/patch-dist-i18n.py /path/to/OpenList/public/dist
-cd /path/to/OpenList && CGO_ENABLED=0 go build -tags=jsoniter -o bin/openlist .
-```
-
-补丁同时会补上官方前端 v4.2.9 里缺失的两个通用字段翻译
-（`seed_policy` → 秒传策略、`root_folder_path` → 根文件夹路径）。
-
-不汉化也能正常用，只是名称显示 `S3 Proxy`、字段显示英文。
 
 ## 从源码安装
 
@@ -99,8 +44,6 @@ cd /path/to/OpenList && CGO_ENABLED=0 go build -tags=jsoniter -o bin/openlist .
    # 先把官方前端 dist 解压到 public/dist/，否则启动会报 index.html not exist
    CGO_ENABLED=0 go build -tags=jsoniter -ldflags "-w -s" -o bin/openlist .
    ```
-
-   需要汉化就在编译前执行上面「方式二」的补丁脚本（或替换成自己构建的 dist）。
 
 4. 用新二进制重启 OpenList；Docker 部署见下面「Docker 部署」。
 
@@ -151,9 +94,6 @@ RUN mkdir -p public/dist \
     && curl -fsSL "https://github.com/OpenListTeam/OpenList-Frontend/releases/download/${FRONTEND_VERSION}/openlist-frontend-dist-${FRONTEND_VERSION}.tar.gz" -o /tmp/dist.tar.gz \
     && tar -xzf /tmp/dist.tar.gz -C public/dist \
     && test -f public/dist/index.html
-
-# 需要中文界面时在这里打补丁（把 i18n/ 目录一起 COPY 进来）
-# RUN apk add --no-cache python3 && python3 i18n/patch-dist-i18n.py public/dist
 
 RUN CGO_ENABLED=0 go build -buildvcs=false -tags=jsoniter -ldflags "-w -s" -o /out/openlist .
 
@@ -231,7 +171,7 @@ docker compose up -d
 
 ## 使用
 
-管理 → 存储 → 添加，驱动选 **`存储代理`**（英文界面是 `S3 Proxy`）。
+管理 → 存储 → 添加，驱动选 **`存储代理`**。
 
 字段和自带 `S3` 驱动完全一样（桶、Endpoint、Region、AK/SK、Session Token、
 Custom Host、预签名、直传、User-Agent……），只是最后多一个：
@@ -269,8 +209,6 @@ s3_proxy/
 ├── proxy.go             # newSOCKS5HTTPClient：fail-closed 的 SOCKS5 Dialer
 ├── proxy_test.go        # SOCKS5 端到端测试
 ├── util_test.go         # 从 drivers/s3 带过来的测试
-├── i18n/
-│   ├── zh-CN.drivers.json   # 合并进前端 drivers.json 的中文词条
-│   └── patch-dist-i18n.py   # 给官方前端 dist 打中文补丁（可选）
+├── i18n/                # 前端中文词条（可选）
 └── README.md
 ```

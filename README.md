@@ -13,7 +13,7 @@
 ```text
 OpenList-New-Storage/
 ├── README.md      # 本文件：汇总
-└── s3_proxy/      # S3 Proxy 驱动（源码 + 安装/使用/Docker/中文汉化说明）
+└── s3_proxy/      # S3 Proxy 驱动（源码 + 安装/使用/Docker 说明）
 ```
 
-安装方式、字段说明、Docker 部署、中文界面（语言包）都在各驱动自己的 README 里。
+安装方式、字段说明、Docker 部署都在各驱动自己的 README 里。
