@@ -1,5 +1,5 @@
 diff --git a/src/pages/manage/storages/Item.tsx b/src/pages/manage/storages/Item.tsx
-index 3ad2a95..799f408 100644
+index 3ad2a95..4539aa3 100644
 --- a/src/pages/manage/storages/Item.tsx
 +++ b/src/pages/manage/storages/Item.tsx
 @@ -3,13 +3,14 @@ import {
@@ -49,7 +49,7 @@ index 3ad2a95..799f408 100644
 +              flex={1}
 +              minW={0}
 +              value={getVal(props.value as string | Accessor<string>)}
-+              onChange={
++              onInput={
 +                props.type === Type.String
 +                  ? (e) => props.onChange?.(e.currentTarget.value)
 +                  : undefined

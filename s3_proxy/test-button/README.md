@@ -36,7 +36,9 @@ python3 /path/to/test-button/frontend/inject_s3proxy_i18n.py src/lang
 pnpm install && pnpm build
 ```
 
-- `Item.tsx`：给字符串字段加 `rightSlot`，把输入框和按钮放进同一个 `HStack`。
+- `Item.tsx`：给字符串字段加 `rightSlot`，把输入框和按钮放进同一个 `HStack`；
+  同时把字符串字段的 `onChange` 改成 `onInput`，否则输入过程中 store 不更新，
+  「测试」按钮会一直是禁用状态（`onChange` 只在失焦时触发）。
 - `AddOrEdit.tsx`：只有 `driver === "S3 Proxy"` 且字段是 `proxy_url` 时才传按钮。
 - `inject_s3proxy_i18n.py`：给 `src/lang/` 里已有的语言补上驱动词条和「测试」提示；
   新增语言后重跑一次即可，已有的值不会被覆盖。
