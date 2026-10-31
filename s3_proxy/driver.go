@@ -4,17 +4,19 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
 	stdpath "path"
+	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
-	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -27,9 +29,11 @@ import (
 type S3Proxy struct {
 	model.Storage
 	Addition
-	Session   *session.Session
-	client    *s3.S3
-	transport *http.Transport
+	Session            *session.Session
+	client             *s3.S3
+	linkClient         *s3.S3
+	directUploadClient *s3.S3
+	transport          *http.Transport
 
 	config driver.Config
 }
@@ -46,16 +50,20 @@ func (d *S3Proxy) Init(ctx context.Context) error {
 	if d.Region == "" {
 		d.Region = "openlist"
 	}
-	if err := d.initSession(); err != nil {
+	err := d.initSession()
+	if err != nil {
 		return err
 	}
-	d.client = d.getClient()
+	d.client = d.getClient(ClientTypeNormal)
+	d.linkClient = d.getClient(ClientTypeLink)
+	d.directUploadClient = d.getClient(ClientTypeDirectUpload)
 	return nil
 }
 
 func (d *S3Proxy) Drop(ctx context.Context) error {
 	if d.transport != nil {
 		d.transport.CloseIdleConnections()
+		d.transport = nil
 	}
 	return nil
 }
@@ -67,21 +75,74 @@ func (d *S3Proxy) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 	return d.listV1(dir.GetPath(), args)
 }
 
-// Link returns a RangeReader rather than a presigned URL. The reader performs
-// GetObject with the SOCKS5-backed HTTP client, so download traffic never
-// connects to the S3 endpoint from the host network.
 func (d *S3Proxy) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	key := getKey(file.GetPath(), false)
-	disposition := ""
-	if d.AddFilenameToDisposition {
-		disposition = utils.GenerateContentDisposition(file.GetName())
+	path := getKey(file.GetPath(), false)
+	fileName := stdpath.Base(path)
+	input := &s3.GetObjectInput{
+		Bucket: &d.Bucket,
+		Key:    &path,
+		//ResponseContentDisposition: &disposition,
 	}
-	return &model.Link{
-		RangeReader: stream.RangeReaderFunc(func(ctx context.Context, requested http_range.Range) (io.ReadCloser, error) {
-			return d.getObjectRange(ctx, key, requested, disposition)
-		}),
-		ContentLength: file.GetSize(),
-	}, nil
+
+	if d.CustomHost == "" {
+		disposition := fmt.Sprintf(`attachment; filename*=UTF-8''%s`, url.PathEscape(fileName))
+		if d.AddFilenameToDisposition {
+			disposition = utils.GenerateContentDisposition(fileName)
+		}
+		input.ResponseContentDisposition = &disposition
+	}
+
+	req, _ := d.linkClient.GetObjectRequest(input)
+	if req == nil {
+		return nil, fmt.Errorf("failed to create GetObject request")
+	}
+	var link model.Link
+	var err error
+	if d.CustomHost != "" {
+		if d.EnableCustomHostPresign {
+			link.URL, err = req.Presign(time.Hour * time.Duration(d.SignURLExpire))
+		} else {
+			err = req.Build()
+			link.URL = req.HTTPRequest.URL.String()
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate link URL: %w", err)
+		}
+
+		if d.RemoveBucket {
+			parsedURL, parseErr := url.Parse(link.URL)
+			if parseErr != nil {
+				log.Errorf("Failed to parse URL for bucket removal: %v, URL: %s", parseErr, link.URL)
+				return nil, fmt.Errorf("failed to parse URL for bucket removal: %w", parseErr)
+			}
+
+			path := parsedURL.Path
+			bucketPrefix := "/" + d.Bucket
+			if strings.HasPrefix(path, bucketPrefix) {
+				path = strings.TrimPrefix(path, bucketPrefix)
+				if path == "" {
+					path = "/"
+				}
+				parsedURL.Path = path
+				link.URL = parsedURL.String()
+				log.Debugf("Removed bucket '%s' from URL path: %s -> %s", d.Bucket, bucketPrefix, path)
+			} else {
+				log.Warnf("URL path does not contain expected bucket prefix '%s': %s", bucketPrefix, path)
+			}
+		}
+	} else {
+		if common.ShouldProxy(d, fileName) {
+			err = req.Sign()
+			link.URL = req.HTTPRequest.URL.String()
+			link.Header = req.HTTPRequest.Header
+		} else {
+			link.URL, err = req.Presign(time.Hour * time.Duration(d.SignURLExpire))
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &link, nil
 }
 
 func (d *S3Proxy) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
@@ -143,6 +204,41 @@ func (d *S3Proxy) Put(ctx context.Context, dstDir model.Obj, s model.FileStreame
 	}
 	_, err := uploader.UploadWithContext(ctx, input)
 	return err
+}
+
+func (d *S3Proxy) GetDirectUploadTools() []string {
+	if !d.EnableDirectUpload {
+		return nil
+	}
+	return []string{"HttpDirect"}
+}
+
+func (d *S3Proxy) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj, fileName string, _ int64) (any, error) {
+	if !d.EnableDirectUpload {
+		return nil, errs.NotImplement
+	}
+	path := getKey(stdpath.Join(dstDir.GetPath(), fileName), false)
+	contentType, _ := ctx.Value(conf.DirectUploadContentTypeKey).(string)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	req, _ := d.directUploadClient.PutObjectRequest(&s3.PutObjectInput{
+		Bucket:      &d.Bucket,
+		Key:         &path,
+		ContentType: &contentType,
+	})
+	if req == nil {
+		return nil, fmt.Errorf("failed to create PutObject request")
+	}
+	link, err := req.Presign(time.Hour * time.Duration(d.SignURLExpire))
+	if err != nil {
+		return nil, err
+	}
+	return &model.HttpDirectUploadInfo{
+		UploadURL: link,
+		Method:    "PUT",
+		Headers:   map[string]string{"Content-Type": contentType},
+	}, nil
 }
 
 // implements driver.Getter interface

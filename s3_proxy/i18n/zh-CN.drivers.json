@@ -1,0 +1,34 @@
+{
+  "S3 Proxy": {
+    "access_key_id": "访问密钥 ID",
+    "add_filename_to_disposition": "添加 Filename 到 Disposition",
+    "add_filename_to_disposition-tips": "添加 Filename 到 Content-Disposition 头中。",
+    "bucket": "存储桶",
+    "custom_host": "自定义主机",
+    "direct_upload_host": "直传主机",
+    "enable_custom_host_presign": "启用自定义主机预签名",
+    "enable_direct_upload": "启用前端直传",
+    "endpoint": "端点",
+    "force_path_style": "强制路径样式",
+    "list_object_version": "列出对象版本",
+    "list_object_versions": {
+      "v1": "V1",
+      "v2": "V2"
+    },
+    "placeholder": "占位文件名",
+    "region": "地区",
+    "remove_bucket": "移除储存桶",
+    "remove_bucket-tips": "使用自定义主机时从路径中删除储存桶名称。",
+    "root_folder_path": "根文件夹路径",
+    "secret_access_key": "访问密钥",
+    "session_token": "会话令牌",
+    "sign_url_expire": "签名链接有效期",
+    "user_agent": "用户代理",
+    "user_agent-tips": "自定义S3请求的用户代理。",
+    "proxy_url": "SOCKS5 代理地址",
+    "proxy_url-tips": "所有 S3 请求都通过该 SOCKS5 代理发送，服务器不会用本机 IP 直接连接对象存储。例如 socks5://127.0.0.1:1080 或 socks5h://user:pass@127.0.0.1:1080。"
+  },
+  "drivers": {
+    "S3 Proxy": "存储代理"
+  }
+}

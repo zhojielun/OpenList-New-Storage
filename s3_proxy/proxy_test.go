@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
-	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 )
 
 func TestNewSOCKS5HTTPClientRejectsInvalidProxyURL(t *testing.T) {
@@ -41,21 +41,10 @@ func TestNewSOCKS5HTTPClientRejectsInvalidProxyURL(t *testing.T) {
 
 func TestDriverRoutesAllS3RequestsThroughSOCKS5(t *testing.T) {
 	var mu sync.Mutex
-	seenRange := ""
 	uploaded := ""
 	s3Server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			if r.Header.Get("Range") != "" {
-				mu.Lock()
-				seenRange = r.Header.Get("Range")
-				mu.Unlock()
-				w.Header().Set("Content-Range", "bytes 1-3/5")
-				w.Header().Set("Content-Length", "3")
-				w.WriteHeader(http.StatusPartialContent)
-				_, _ = io.WriteString(w, "234")
-				return
-			}
 			w.Header().Set("Content-Type", "application/xml")
 			_, _ = io.WriteString(w, `<ListBucketResult><Name>bucket</Name><Prefix></Prefix><Marker></Marker><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>hello.txt</Key><LastModified>2026-01-01T00:00:00.000Z</LastModified><ETag>"etag"</ETag><Size>5</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>`)
 		case http.MethodPut:
@@ -83,6 +72,7 @@ func TestDriverRoutesAllS3RequestsThroughSOCKS5(t *testing.T) {
 			SecretAccessKey:   "secret-key",
 			ForcePathStyle:    true,
 			ListObjectVersion: "v1",
+			SignURLExpire:     4,
 			ProxyURL:          "socks5://" + socksAddr,
 		},
 	}
@@ -103,26 +93,21 @@ func TestDriverRoutesAllS3RequestsThroughSOCKS5(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Link: %v", err)
 	}
-	if link.URL != "" || link.RangeReader == nil {
-		t.Fatalf("Link must return a RangeReader without a URL, got URL=%q RangeReader=%v", link.URL, link.RangeReader != nil)
+	if link.URL == "" {
+		t.Fatal("Link returned an empty URL")
 	}
-	rc, err := link.RangeReader.RangeRead(context.Background(), http_range.Range{Start: 1, Length: 3})
+	if link.RangeReader != nil {
+		t.Fatal("Link should keep the S3 driver behavior and not force a proxied reader")
+	}
+	u, err := url.Parse(link.URL)
 	if err != nil {
-		t.Fatalf("RangeRead: %v", err)
+		t.Fatalf("parse link URL: %v", err)
 	}
-	body, err := io.ReadAll(rc)
-	if err != nil {
-		t.Fatalf("read range: %v", err)
+	if u.Scheme != "http" || u.Host != "s3-proxy.invalid" || u.Path != "/bucket/hello.txt" {
+		t.Fatalf("unexpected link URL: %s", link.URL)
 	}
-	_ = rc.Close()
-	if string(body) != "234" {
-		t.Fatalf("range body = %q, want %q", body, "234")
-	}
-	mu.Lock()
-	gotRange := seenRange
-	mu.Unlock()
-	if gotRange != "bytes=1-3" {
-		t.Fatalf("Range header = %q, want %q", gotRange, "bytes=1-3")
+	if u.Query().Get("X-Amz-Signature") == "" {
+		t.Fatalf("link URL is not presigned: %s", link.URL)
 	}
 
 	err = d.Put(context.Background(), &model.Object{Path: "/"}, &stream.FileStream{

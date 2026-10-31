@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -12,7 +11,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/request"
@@ -31,13 +30,12 @@ const (
 // do others that not defined in Driver interface
 
 func (d *S3Proxy) initSession() error {
-	if d.transport != nil {
-		d.transport.CloseIdleConnections()
-		d.transport = nil
-	}
 	httpClient, transport, err := newSOCKS5HTTPClient(d.ProxyURL)
 	if err != nil {
 		return err
+	}
+	if d.transport != nil {
+		d.transport.CloseIdleConnections()
 	}
 	d.transport = transport
 	cfg := &aws.Config{
@@ -55,11 +53,46 @@ func (d *S3Proxy) initSession() error {
 	return err
 }
 
-func (d *S3Proxy) getClient() *s3.S3 {
+const (
+	ClientTypeNormal = iota
+	ClientTypeLink
+	ClientTypeDirectUpload
+)
+
+func (d *S3Proxy) getClient(clientType int) *s3.S3 {
 	client := s3.New(d.Session)
 	if d.UserAgent != "" {
 		client.Handlers.Build.PushBack(func(r *request.Request) {
 			r.HTTPRequest.Header.Set("User-Agent", d.UserAgent)
+		})
+	}
+	if clientType == ClientTypeLink && d.CustomHost != "" {
+		client.Handlers.Build.PushBack(func(r *request.Request) {
+			if r.HTTPRequest.Method != http.MethodGet {
+				return
+			}
+			//判断CustomHost是否以http://或https://开头
+			split := strings.SplitN(d.CustomHost, "://", 2)
+			if utils.SliceContains([]string{"http", "https"}, split[0]) {
+				r.HTTPRequest.URL.Scheme = split[0]
+				r.HTTPRequest.URL.Host = split[1]
+			} else {
+				r.HTTPRequest.URL.Host = d.CustomHost
+			}
+		})
+	}
+	if clientType == ClientTypeDirectUpload && d.DirectUploadHost != "" {
+		client.Handlers.Build.PushBack(func(r *request.Request) {
+			if r.HTTPRequest.Method != http.MethodPut {
+				return
+			}
+			split := strings.SplitN(d.DirectUploadHost, "://", 2)
+			if utils.SliceContains([]string{"http", "https"}, split[0]) {
+				r.HTTPRequest.URL.Scheme = split[0]
+				r.HTTPRequest.URL.Host = split[1]
+			} else {
+				r.HTTPRequest.URL.Host = d.DirectUploadHost
+			}
 		})
 	}
 	return client
@@ -80,29 +113,6 @@ func getPlaceholderName(placeholder string) string {
 		return defaultPlaceholderName
 	}
 	return placeholder
-}
-
-func (d *S3Proxy) getObjectRange(ctx context.Context, key string, requested http_range.Range, disposition string) (io.ReadCloser, error) {
-	if requested.Length == 0 {
-		return io.NopCloser(strings.NewReader("")), nil
-	}
-	input := &s3.GetObjectInput{
-		Bucket: &d.Bucket,
-		Key:    &key,
-	}
-	if disposition != "" {
-		input.ResponseContentDisposition = &disposition
-	}
-	if requested.Length > 0 {
-		input.Range = aws.String(fmt.Sprintf("bytes=%d-%d", requested.Start, requested.Start+requested.Length-1))
-	} else if requested.Start > 0 {
-		input.Range = aws.String(fmt.Sprintf("bytes=%d-", requested.Start))
-	}
-	out, err := d.client.GetObjectWithContext(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	return out.Body, nil
 }
 
 func (d *S3Proxy) listV1(dirPath string, args model.ListArgs) ([]model.Obj, error) {
@@ -225,10 +235,6 @@ func (d *S3Proxy) copyFile(ctx context.Context, src string, dst string, size int
 	srcKey := getKey(src, false)
 	dstKey := getKey(dst, false)
 	encodedKey := strings.ReplaceAll(url.PathEscape(d.Bucket+"/"+srcKey), "+", "%2B")
-	// Keep the bucket/key separator (and path separators inside the key)
-	// literal. Some S3-compatible servers split CopySource before URL
-	// decoding and reject an encoded separator.
-	encodedKey = strings.ReplaceAll(encodedKey, "%2F", "/")
 	if size > maxCopyObjectSize {
 		return d.copyFileMultipart(ctx, srcKey, dstKey, encodedKey, size)
 	}
