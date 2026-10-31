@@ -1,5 +1,5 @@
 diff --git a/src/pages/manage/storages/AddOrEdit.tsx b/src/pages/manage/storages/AddOrEdit.tsx
-index 6f64119..e0a8dea 100644
+index 6f64119..c6be902 100644
 --- a/src/pages/manage/storages/AddOrEdit.tsx
 +++ b/src/pages/manage/storages/AddOrEdit.tsx
 @@ -96,6 +96,27 @@ const AddOrEdit = () => {
@@ -30,13 +30,12 @@ index 6f64119..e0a8dea 100644
    const [okLoading, ok] = useFetch((): PResp<{ id: number }> => {
      setStorage("addition", JSON.stringify(addition))
      return r.post(`/admin/storage/${id ? "update" : "create"}`, storage)
-@@ -181,6 +202,20 @@ const AddOrEdit = () => {
+@@ -181,6 +202,19 @@ const AddOrEdit = () => {
                  onChange={(val: any) => {
                    setAddition(item.name, val)
                  }}
 +                rightSlot={
-+                  storage.driver === "S3 Proxy" &&
-+                  item.name === "proxy_url" ? (
++                  storage.driver === "S3 Proxy" && item.name === "proxy_url" ? (
 +                    <Button
 +                      variant="subtle"
 +                      loading={proxyTesting()}
